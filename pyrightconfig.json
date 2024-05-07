@@ -1,0 +1,23 @@
+{
+  "include": [
+    "*.py",
+    "*.ipynb",
+    "train/**"
+  ],
+    "exclude": [
+      "test/**",
+      "LICENSE",
+      "tmp*",
+      "*data*/**",
+      "taxo_data/**",
+      "*log",
+      "train/**",
+      "legacy/**",
+      "readme_images/**",
+      "tmp*.ipynb",
+      "*pdf",
+      "*svg",
+      "*png",
+      "output/**"
+    ]
+}

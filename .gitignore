@@ -1,0 +1,13 @@
+
+tmp/**
+output/
+legacy/
+*data/
+__pycache__/
+
+tmp*.py
+*png
+*svg
+*pdf
+*csv
+*.log
