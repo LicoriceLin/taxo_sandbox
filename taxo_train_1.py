@@ -4,7 +4,6 @@ import pickle as pkl
 import pandas as pd
 from torch import nn
 import torch
-from torch.utils.data import DataLoader, Dataset
 from transformers import EsmModel, EsmConfig, EsmTokenizer
 from torch.nn.modules.loss import _Loss
 import torch.nn.functional as F
@@ -27,7 +26,6 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 # from collections import OrderedDict
-import os
 from tqdm import tqdm
 import sys
 import networkx as nx
@@ -48,7 +46,7 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)  
         torch.cuda.manual_seed_all(seed)  
-set_seed(42)
+# set_seed(42)
 
 # %%
 def hide_spline(ax:Axes):

@@ -11,3 +11,4 @@ tmp*.py
 *pdf
 *csv
 *.log
+*.pkl

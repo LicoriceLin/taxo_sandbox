@@ -104,78 +104,78 @@ if __name__=='__main__':
 #     return o,hierarchical_labels_,null_level_dict
 # o,hierarchical_labels_,null_level_dict=recur_size_count(order_manager.hierarchical_labels)
 # %%
-import networkx as nx
-G=nx.DiGraph()
-def to_graph(G:nx.DiGraph,hierarchical_labels:dict,cur_key:str='root'):
-    for k,v in hierarchical_labels.items():
-        G.add_edge(cur_key,k)
-        if isinstance(v,list):
-            for i in v:
-                G.add_edge(k,i)
-        elif isinstance(v,dict):
-            for i,sub_d in v.items():
-                G.add_edge(k,i)
-                to_graph(G,sub_d,i)
+# import networkx as nx
+# G=nx.DiGraph()
+# def to_graph(G:nx.DiGraph,hierarchical_labels:dict,cur_key:str='root'):
+#     for k,v in hierarchical_labels.items():
+#         G.add_edge(cur_key,k)
+#         if isinstance(v,list):
+#             for i in v:
+#                 G.add_edge(k,i)
+#         elif isinstance(v,dict):
+#             for i,sub_d in v.items():
+#                 G.add_edge(k,i)
+#                 to_graph(G,sub_d,i)
 
-to_graph(G,order_manager.split_null_hierarchical_labels)
+# to_graph(G,order_manager.split_null_hierarchical_labels)
 
-# x=[i.to('cpu') for i in x]
-import matplotlib.colors as mcolors
-color_levels=[mcolors.LinearSegmentedColormap.from_list(
-    i,[[1,1,1],mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{i}'])]) for i in ['pinkish red','purply','ocean','peach']]
-def x_to_color_dict(x:List[torch.Tensor],
-                    order_manager:OrderManager,
-                    batch_i:int=0,
-                    color_levels=color_levels,
-                    ):
-    null_level_dict=order_manager.null_level_dict
-    color_dict={'root':mcolors.to_rgb('white')}
-    for level_id,level in enumerate(order_manager.levels):
-        pred:torch.Tensor=x[level_id][batch_i].to('cpu')
-        cmap=color_levels[level_id]
-        level_color_dict={}
-        pred:torch.Tensor
-        pred=F.softmax(pred.to('cpu'),dim=-1)
-        for i,term in enumerate(level):
-            level_color_dict[term]=cmap(pred[i])
-        if 'Null' in level_color_dict:
-            null_color=level_color_dict.pop('Null')
-            split_nulls={k:null_color for k,v in null_level_dict.items() if v==level_id}
-            level_color_dict.update(split_nulls)
-        color_dict.update(level_color_dict)
-    return color_dict
+# # x=[i.to('cpu') for i in x]
+# import matplotlib.colors as mcolors
+# color_levels=[mcolors.LinearSegmentedColormap.from_list(
+#     i,[[1,1,1],mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{i}'])]) for i in ['pinkish red','purply','ocean','peach']]
+# def x_to_color_dict(x:List[torch.Tensor],
+#                     order_manager:OrderManager,
+#                     batch_i:int=0,
+#                     color_levels=color_levels,
+#                     ):
+#     null_level_dict=order_manager.null_level_dict
+#     color_dict={'root':mcolors.to_rgb('white')}
+#     for level_id,level in enumerate(order_manager.levels):
+#         pred:torch.Tensor=x[level_id][batch_i].to('cpu')
+#         cmap=color_levels[level_id]
+#         level_color_dict={}
+#         pred:torch.Tensor
+#         pred=F.softmax(pred.to('cpu'),dim=-1)
+#         for i,term in enumerate(level):
+#             level_color_dict[term]=cmap(pred[i])
+#         if 'Null' in level_color_dict:
+#             null_color=level_color_dict.pop('Null')
+#             split_nulls={k:null_color for k,v in null_level_dict.items() if v==level_id}
+#             level_color_dict.update(split_nulls)
+#         color_dict.update(level_color_dict)
+#     return color_dict
     
     
-def y_to_color_dict(y:List[torch.Tensor],
-                    order_manager:OrderManager,
-                    batch_i:int=0,
-                    color_levels=color_levels,
-                    ):
-    null_level_dict=order_manager.null_level_dict
-    color_dict={'root':mcolors.to_rgb('white')}
-    for level_id,level in enumerate(order_manager.levels):
-        # TODO:use order_manager's idx_to_onehot and merge with x_to_color_dict
-        true:torch.Tensor=F.one_hot(y[level_id].to('cpu'),len(level))[batch_i].float().numpy()
-        cmap=color_levels[level_id]
-        level_color_dict={}
-        for i,term in enumerate(level):
-            level_color_dict[term]=cmap(true[i])
-        if 'Null' in level_color_dict:
-            null_color=level_color_dict.pop('Null')
-            split_nulls={k:null_color for k,v in null_level_dict.items() if v==level_id}
-            level_color_dict.update(split_nulls)
-        color_dict.update(level_color_dict)
-    return color_dict
+# def y_to_color_dict(y:List[torch.Tensor],
+#                     order_manager:OrderManager,
+#                     batch_i:int=0,
+#                     color_levels=color_levels,
+#                     ):
+#     null_level_dict=order_manager.null_level_dict
+#     color_dict={'root':mcolors.to_rgb('white')}
+#     for level_id,level in enumerate(order_manager.levels):
+#         # TODO:use order_manager's idx_to_onehot and merge with x_to_color_dict
+#         true:torch.Tensor=F.one_hot(y[level_id].to('cpu'),len(level))[batch_i].float().numpy()
+#         cmap=color_levels[level_id]
+#         level_color_dict={}
+#         for i,term in enumerate(level):
+#             level_color_dict[term]=cmap(true[i])
+#         if 'Null' in level_color_dict:
+#             null_color=level_color_dict.pop('Null')
+#             split_nulls={k:null_color for k,v in null_level_dict.items() if v==level_id}
+#             level_color_dict.update(split_nulls)
+#         color_dict.update(level_color_dict)
+#     return color_dict
 
-color_dict=x_to_color_dict(x,order_manager,batch_i=0)
-fig,ax=plt.subplots(1,1,figsize=(16, 16))
-ax:Axes
-pos = nx.nx_agraph.graphviz_layout(G, prog="twopi", args="")
-to_label=lambda x:x if 'Null' not in x else 'Null'
-nx.draw_networkx_nodes(G,pos,ax=ax,node_size=300
-                       ,node_color=[color_dict.get(n,(0,0,0,0)) for n in G],edgecolors='black')
-nx.draw_networkx_edges(G,pos)
-nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G})
+# color_dict=x_to_color_dict(x,order_manager,batch_i=0)
+# fig,ax=plt.subplots(1,1,figsize=(16, 16))
+# ax:Axes
+# pos = nx.nx_agraph.graphviz_layout(G, prog="twopi", args="")
+# to_label=lambda x:x if 'Null' not in x else 'Null'
+# nx.draw_networkx_nodes(G,pos,ax=ax,node_size=300
+#                        ,node_color=[color_dict.get(n,(0,0,0,0)) for n in G],edgecolors='black')
+# nx.draw_networkx_edges(G,pos)
+# nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G})
 
         
         
