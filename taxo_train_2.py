@@ -159,7 +159,7 @@ class SegIterDiamond(IterableDataset):
             return rand.random_generator.sample(np.where(valid)[0].tolist(),1)[0]
         
         def _generator():
-            logger.info(f'seed: {self.rootseed+worker_info.id}')
+            logger.info(f'seed: {rand.seed}')
             
             while True:
                 r=self.data.iloc[rand.random_generator.sample(

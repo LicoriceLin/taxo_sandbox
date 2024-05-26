@@ -12,3 +12,5 @@ tmp*.py
 *csv
 *.log
 *.pkl
+tmp*
+train

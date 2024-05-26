@@ -13,14 +13,14 @@ import numpy as np
 import logging
 import time
 import os
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, Dataset, DistributedSampler
+# import torch.distributed as dist
+# from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, Dataset, DistributedSampler,random_split
 
 from copy import deepcopy
 from math import ceil
 import matplotlib.pyplot as plt
-import matplotlib as mpl
+# import matplotlib as mpl
 import matplotlib.colors as mcolors
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_pdf import PdfPages
@@ -46,17 +46,27 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)  
         torch.cuda.manual_seed_all(seed)  
-# set_seed(42)
-
+# 
 # %%
 def hide_spline(ax:Axes):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_visible(False)
     ax.spines['bottom'].set_visible(False)
+    
+def circle(center:tuple,outer:tuple,**kwargs):
+    '''
+    kwargs: for `plt.Circle`
+    '''
+    radius = ((center[0]-outer[0])**2+
+                (center[1]-outer[1])**2)**0.5
+    return plt.Circle((center[0], center[1]), radius,**kwargs)
+    
 class OrderManager:
     def __init__(self,order_dict:dict,level_names:Optional[list]=None, #device:Union[str,int]='cpu',
-                 color_levels=['pinkish red','purply','ocean','peach']):
+                 color_levels:List[str]=['pinkish red','purply','ocean','peach'],
+                 layout_prog="twopi"
+                 ):
         '''
         
         # device: Only used in `idx_to_onehot`
@@ -75,7 +85,7 @@ class OrderManager:
             
         assert len(color_levels)>=len(self.levels)
         self._gen_visual_props(color_levels=color_levels)
-        self._gen_order_graph()
+        self._gen_order_graph(layout_prog)
         
     def _parse_order(self,order_dict:dict):
         def smart_fetch_list(l:list,idx:int,init_l=[])->list:
@@ -155,7 +165,7 @@ class OrderManager:
          self.peeled_numeric_hierarchy
         )=parse_order(order_dict)
         
-    def _gen_visual_props(self,color_levels):
+    def _gen_visual_props(self,color_levels:List[str]):
         def recur_size_count(hierarchical_labels:dict,cur_key:str='root',null_level=0):
             o={}
             null_level_dict={}
@@ -187,9 +197,16 @@ class OrderManager:
         
         self.color_levels=[mcolors.LinearSegmentedColormap.from_list(
             name,[[1-(1-j)*0.05 for j in max_colors[i]],max_colors[i]]) for i,name in enumerate(self.level_names)]
-        self.color_names=color_levels
+        self.color_names:List[str]=color_levels
         
-    def _gen_order_graph(self):
+    def _gen_order_graph(self,layout_prog:str):
+        '''
+        if you want to edit the layout properties, add them to the graph property
+        
+        e.g.
+        order_manager.order_graph.graph['rankdir']="LR"
+        order_manager.order_graph.nodes['root']['root']=True
+        '''
         self.order_graph=nx.DiGraph()
         def to_graph(G:nx.DiGraph,hierarchical_labels:dict,cur_key:str='root'):
             for k,v in hierarchical_labels.items():
@@ -202,7 +219,7 @@ class OrderManager:
                         G.add_edge(k,i)
                         to_graph(G,sub_d,i)
         to_graph(self.order_graph,self.split_null_hierarchical_labels)
-        self.graph_pos = nx.nx_agraph.graphviz_layout(self.order_graph, prog="twopi", args="")
+        self.graph_pos = nx.nx_agraph.graphviz_layout(self.order_graph, prog=layout_prog)
         
     def order_to_idx(self,order_list:List[str])->List[int]:
         o=[]
@@ -232,7 +249,7 @@ class OrderManager:
         for robustness, I put `.detach().to('cpu')` in this method
         '''
         null_level_dict=self.null_level_dict
-        color_dict={'root':mcolors.to_rgb('white')}
+        color_dict={'root':mcolors.to_rgb('dimgrey')}
         is_long= (distribution[0].dtype==torch.long)
         for level_id,level in enumerate(self.levels):
             dist:torch.Tensor=distribution[level_id][batch_i].float().detach().to('cpu')
@@ -257,9 +274,14 @@ class OrderManager:
         to_label=lambda x:x if 'Null' not in x else 'Null'
         G,pos=self.order_graph,self.graph_pos
         nx.draw_networkx_nodes(G,pos,ax=ax,node_size=node_size
-            ,node_color=[color_dict.get(n,null_color) for n in G],edgecolors='black')
-        nx.draw_networkx_edges(G,pos,ax=ax)
-        nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G},ax=ax)
+            ,node_color=[color_dict.get(n,null_color) for n in G],edgecolors='grey')
+        nx.draw_networkx_edges(G,pos,ax=ax,arrowstyle='->',edge_color='grey')
+        nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G},ax=ax,font_size=10,font_color='dimgrey')
+        for i in range(len(self.levels)):
+            circle_=circle(self.graph_pos['root'],self.graph_pos[self.levels[i][1]],
+                        **dict(fill=False, edgecolor=mcolors.XKCD_COLORS[f'xkcd:{self.color_names[i]}'], 
+                            linestyle='--', linewidth=2, alpha=0.5))
+            ax.add_patch(circle_)
         hide_spline(ax)
         return ax
     
@@ -285,17 +307,21 @@ class OrderManager:
         y_ticks=np.linspace(0,1,6)
         colors=[mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{i}']) for i in self.color_names]
         bars = ax.bar(x_ticks, probabs, color=colors)
-        ax.set_xticks(x_ticks,self.level_names,fontsize=fontsize)
+        ax.set_xticks(x_ticks,self.level_names,fontsize=fontsize,color="dimgrey")
         ax.set_ylim(0,1.1)
         ax.set_yticks(y_ticks,labels=[f'{i:.1f}' for i in y_ticks], fontsize=fontsize*2/3)
-        ax.set_ylabel("Probab of True Label",fontdict={'fontsize':fontsize})
+        ax.set_ylabel("Probab of True Label",fontdict={'fontsize':fontsize, 'color': 'dimgrey'})
         for bar in bars:
             yval = bar.get_height()
             ax.text(bar.get_x() + bar.get_width() / 2, yval, round(yval, 2),
-                    ha='center', va='bottom',fontdict={'fontsize':fontsize})
+                    ha='center', va='bottom',fontdict={'fontsize':fontsize,'color': 'dimgrey'})
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         
+        ax.spines['left'].set_color('gray')
+        ax.spines['bottom'].set_color('gray')
+        ax.tick_params(axis='x', colors='gray')
+        ax.tick_params(axis='y', colors='gray')
         
 # %%
 class ClassificationHead(nn.Module):
@@ -329,7 +355,7 @@ class HierarESM(nn.Module):
         self.ff_fold=ff_fold
         self.num_block_layers=num_block_layers
         
-        self.tokenizer = EsmTokenizer.from_pretrained(model_name)
+        self.tokenizer:EsmTokenizer = EsmTokenizer.from_pretrained(model_name)
         self.backbone:EsmModel = EsmModel.from_pretrained(model_name).to(self.device)
         self.hidden_size:int=self.backbone.config.hidden_size
         self.dtype=self.backbone.config.torch_dtype
@@ -391,7 +417,9 @@ class HierarESM(nn.Module):
             setattr(self,f'head_{i+1}',ClassificationHead(
                 self.hidden_size,inner_dim,num_classes).to(self.device))
               
-    def forward(self, ipt:Dict[str,torch.Tensor],sentence_mask:torch.Tensor):
+    def forward(self, input_ids:torch.Tensor,
+            attention_mask:torch.Tensor,sentence_mask:torch.Tensor):
+        #ipt:Dict[str,torch.Tensor],sentence_mask:torch.Tensor
         '''
         `ipt`: 
             ordered dict from parse_sentence
@@ -402,6 +430,11 @@ class HierarESM(nn.Module):
             [batch_size*max_domain,]
         
         '''
+        ipt={'input_ids':input_ids.view(-1,self.max_length),
+             'attention_mask':attention_mask.view(-1,self.max_length)
+             }
+        sentence_mask=sentence_mask.view(-1)
+        
         device,dtype=self.device,self.dtype
         ipt={k:v[sentence_mask.type(torch.bool)] for k,v in ipt.items()}
         ori_ebs:torch.Tensor = F.normalize(self.backbone(**ipt).pooler_output,dim=-1)
@@ -416,7 +449,7 @@ class HierarESM(nn.Module):
         order_count=len(self.order_manager.levels)
         opt_size=ss+order_count
         
-        memory_key_padding_mask:torch.Tensor=(1-sentence_mask).bool()
+        memory_key_padding_mask:torch.Tensor=(1-sentence_mask.float()).bool()
 
         src_key_padding_mask=torch.zeros(bs,opt_size,device=device).bool()
         src_key_padding_mask[:,:ss]=memory_key_padding_mask
@@ -450,7 +483,10 @@ class HierarESM(nn.Module):
             batch_name,domains,batch_y,domains_mask=process_batch(sample,self.max_domain)
             domains_mask=domains_mask.to(self.device)
             ipts=self.parse_sentence(domains)
-            x:List[torch.Tensor]=self(ipts,domains_mask)
+            x:List[torch.Tensor]=self(ipts['input_ids'].view(-1,self.max_domain,self.max_length),
+                                      ipts['attention_mask'].view(-1,self.max_domain,self.max_length),
+                                      domains_mask.view(-1,self.max_domain))
+            
             y=self.order_manager.idx_to_onehot(batch_y)
             # import pdb;pdb.set_trace()
             for i,name in enumerate(batch_name):
@@ -485,7 +521,9 @@ class HierarESM(nn.Module):
             batch_name,domains,batch_y,domains_mask=process_batch(sample,self.max_domain)
             domains_mask=domains_mask.to(self.device)
             ipts=self.parse_sentence(domains)
-            x:List[torch.Tensor]=self(ipts,domains_mask)
+            x:List[torch.Tensor]=self(ipts['input_ids'].view(-1,self.max_domain,self.max_length),
+                            ipts['attention_mask'].view(-1,self.max_domain,self.max_length),
+                            domains_mask.view(-1,self.max_domain))
             y=batch_y
             
         if prev_model_state:
@@ -644,7 +682,6 @@ class HierarchicalLossNetwork(_Loss):
         bool_tensor = [single_check(current_level[i],previous_level[i]) for i in range(previous_level.size()[0])]
         return torch.FloatTensor(bool_tensor).to(rank)
 
-
     def calculate_lloss(self, predictions, true_labels,rank:Optional[int]=None):
         '''Calculates the layer loss.
         '''
@@ -699,25 +736,54 @@ def cal_accuracy(predictions, labels):
 
 # %%
 
+class wrapper_module(nn.Module):
+    def __init__(self, inner:nn.Module,*extra_args) -> None:
+        super().__init__()
+        self.inner=inner
+        self.extra_args=extra_args
+        
+    def forward(self,args):
+        return self.inner(args,*self.extra_args)
+    
+def process_sample(sample:dict):
+    domains=[]
+    batch_size=len(sample['seq'][0])
+    for i in range(batch_size):
+        for j in range(max_domain):    
+            domains.append(sample['seq'][j][i])
+    domains_mask=torch.stack(sample['sentence_mask']).T.reshape(-1).to(device)
+    ipts=hierar_esmmodel.parse_sentence(domains)
+    return (ipts['input_ids'].view(-1,max_domain,max_length),
+            ipts['attention_mask'].view(-1,max_domain,max_length),
+            domains_mask.view(-1,max_domain))
+    
+# %%
 if __name__=='__main__':
-    odir=f'train/{time_str}'
-    os.mkdir(odir)
-    writer = SummaryWriter(log_dir=f'{odir}/log')
-    device=0
+    seed=47
+    device=1
     batch_size=2
+    batch_size_val=30
     max_domain=15
     acc_step=20
+    valid_step=500
     max_length=500
     to_freeze=3
-
-    order_manager=OrderManager(pkl.load(open('dataset/taxo_data/hierarchy_order.pkl','rb'))['Riboviria'],
+    set_seed(seed)
+    
+    order_manager=OrderManager(pkl.load(open('taxo_data/hierarchy_order.pkl','rb'))['Riboviria'],
                             level_names=['Kingdom','Phylum','Class','Order'])
     hierar_esmmodel=HierarESM(order_manager=order_manager,max_length=max_length,to_freeze=to_freeze,device=device)
     hierar_loss=HierarchicalLossNetwork(order_manager)
     optimizer = Adam(hierar_esmmodel.parameters(), lr=1e-4)
 
-    dataset=ConcatProteinDataset('dataset/taxo_data/proseq_taxo.pkl',order_manager)
-    train_generator = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=batch_size)
+    dataset=ConcatProteinDataset('taxo_data/proseq_taxo_1.pkl',order_manager)
+    trainset,valset=random_split(dataset,[0.9,0.1])
+    train_generator = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=batch_size)
+    val_generator = DataLoader(valset, batch_size=batch_size_val, shuffle=True, num_workers=batch_size)
+    
+    odir=f'train/v1_{time_str}_seed{seed}'
+    os.mkdir(odir)
+    writer = SummaryWriter(log_dir=f'{odir}/log')
     # %% train
     hierar_esmmodel.train()
 
@@ -725,45 +791,82 @@ if __name__=='__main__':
         pred_dict={i:[] for i in order_manager.level_names}
         true_dict={i:[] for i in order_manager.level_names}
         return pred_dict,true_dict
+    
+
+        
+        
+    def train_step(sample):
+        optimizer.zero_grad()
+        batch_name, batch_x, batch_y,sentence_mask =sample['name'], sample['seq'], sample['taxo'],sample['sentence_mask']
+        model_input=process_sample(sample)
+        x:List[torch.Tensor]=hierar_esmmodel(*model_input)  
+        y=[i.to(device) for i in batch_y]
+        loss:torch.Tensor = hierar_loss(x,y,device)
+        return [i.detach().cpu() for i in x],loss
+    
     pred_dict,true_dict=init_acc_logs()
     cur_acc_step=0
     global_step=0
-
+    best_val_acc=0
+    
     for epoch in range(10):
         for step, sample in tqdm(enumerate(train_generator)):
-            optimizer.zero_grad()
-            batch_name, batch_x, batch_y,sentence_mask =sample['name'], sample['seq'], sample['taxo'],sample['sentence_mask']
-            domains=[]
-            for i in range(batch_size):
-                for j in range(max_domain):    
-                    domains.append(sample['seq'][j][i])
-            domains_mask=torch.stack(sample['sentence_mask']).T.reshape(-1).to(device)
-            
-            ipts=hierar_esmmodel.parse_sentence(domains)
-            x=hierar_esmmodel(ipts,domains_mask)    
-            y=[i.to(device) for i in batch_y]
-            
-            loss:torch.Tensor = hierar_loss(x,y,device)
+            x,loss=train_step(sample)
             loss.backward()
             optimizer.step()
-            writer.add_scalar('train loss',loss.item(),global_step)
-            
+            writer.add_scalar('train/loss',loss.item(),global_step)
+            writer.add_scalar('epoch',epoch,global_step)
             for i in range(len(x)):
                 k=order_manager.level_names[i]
-                pred_dict[k].append(x[i].detach().cpu())
-                true_dict[k].append(y[i].detach().cpu())
+                pred_dict[k].append(x[i])
+                true_dict[k].append(sample['taxo'][i])
                 cur_acc_step+=1
         
             if cur_acc_step==acc_step:
                 pred_dict={k:torch.concat(v,dim=0) for k,v in pred_dict.items()}
                 true_dict={k:torch.concat(v,dim=0) for k,v in true_dict.items()}
                 accuracies={k:cal_accuracy(pred_dict[k],true_dict[k]) for k,v in pred_dict.items()}
-                writer.add_scalars('level-accuracy',accuracies,global_step)
+                writer.add_scalars('train/accuracy',accuracies,global_step)
                 pred_dict,true_dict=init_acc_logs()
                 cur_acc_step=0
                 
+            
+            if global_step%valid_step==0:
+                with torch.set_grad_enabled(False):
+                    hierar_esmmodel.eval()
+                    x_s,y_s,ebs,labels=[],[],[],[]
+                    for step, sample in tqdm(enumerate(val_generator)):
+                        # batch_y=sample['taxo']
+                        x_s.append([i.detach().to('cpu') for i in hierar_esmmodel(*process_sample(sample))])
+                        y_s.append(sample['taxo'])
+                        
+                        _names,_ebs,_labels=hierar_esmmodel._embed(sample)
+                        ebs.append(torch.concat(_ebs,dim=1).detach().to('cpu'))
+                        labels.extend([order_manager.levels[-1][i] for i in _labels[-1].tolist()])
+                        del _names,_ebs,_labels
+                    x_s=[torch.concat([j[i] for j in x_s],dim=0) for i in range(order_manager.total_level)]
+                    y_s=[torch.concat([j[i] for j in y_s],dim=0) for i in range(order_manager.total_level)]
+                    accuracies={k:cal_accuracy(i,j) for k,i,j in zip(order_manager.level_names,x_s,y_s)}
+                    writer.add_scalars('valid/accuracy',accuracies,global_step)
+                    writer.add_scalar('valid/loss',hierar_loss(x_s,y_s,'cpu').item(),global_step)
+                    writer.add_embedding(mat=torch.concat(ebs,dim=0),
+                                        metadata=labels,
+                                        global_step=global_step,
+                                        tag='valid/embeddings')
+                    if best_val_acc<accuracies[order_manager.level_names[-1]]:
+                        best_val_acc=accuracies[order_manager.level_names[-1]]
+                    hierar_esmmodel.train()
+                    
             global_step+=1
-        torch.save(hierar_esmmodel.state_dict(), f'{odir}/ep-{epoch+1}.pt')
+                # import pdb;pdb.set_trace()
+                # writer.add_pr_curve('valid prc',labels=y_s[-1],predictions=x_s[-1],global_step=global_step)
+                
+        torch.save(hierar_esmmodel.state_dict(), f'{odir}/ep-{epoch}.pt')
+        
+    writer.add_hparams(hparam_dict=dict(max_domain=max_domain,max_length=max_length,
+                    to_freeze=to_freeze,seed=seed,device=device,
+                    batch_size=batch_size,acc_step=acc_step),
+                       metric_dict={'best_val_acc':best_val_acc})
 # %%
 
 # if 0:

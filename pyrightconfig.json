@@ -1,8 +1,7 @@
 {
   "include": [
     "*.py",
-    "*.ipynb",
-    "train/**"
+    "*.ipynb"
   ],
     "exclude": [
       "test/**",
