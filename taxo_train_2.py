@@ -32,15 +32,9 @@ from Bio.Seq import Seq
 # from taxo_train_1 import OrderManager
 import logging
 logger=logging.getLogger()
-
+from hierataxo import LocalRandomGenerator
 # %%
-class LocalRandomGenerator:
-    def __init__(self,seed:int):
-        self.seed=seed
-        self.random_generator=random.Random(seed)
-        self.numpy_generator=np.random.default_rng(seed)
-        self.torch_generator=torch.Generator('cpu')
-        self.torch_generator.manual_seed(seed)
+
 # %%
 # def annot_seg(seg:str):
 #     pass
