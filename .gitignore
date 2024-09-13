@@ -1,6 +1,7 @@
 
 tmp/**
 output/
+output*/
 legacy/
 *data/
 __pycache__/

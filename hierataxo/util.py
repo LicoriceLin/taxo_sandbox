@@ -236,6 +236,7 @@ class OrderManager:
                 idx_list[i],torch.Tensor) else idx_list[i]
             o.append([level[j] for j in idx_l])
         return o
+    
     def order_to_onehot(self,order_list:List[str])->List[torch.Tensor]:
         return self.idx_to_onehot(self.order_to_idx(order_list))
 
@@ -326,10 +327,10 @@ class OrderManager:
         ax.tick_params(axis='y', colors='gray')
     
 # %%
-def cal_accuracy(predictions:torch.Tensor, labels:int):
+def cal_accuracy(predictions:torch.Tensor, labels:torch.Tensor):
     '''Calculates the accuracy of the prediction.
        prediction: the layer output
-       label: the gt id instead of onehot 
+       label: the [bz,1] tensor gt id instead of onehot 
     '''
 
     num_data = labels.size()[0]
@@ -428,6 +429,7 @@ named_taxo_palette={'Null': '#cccccc',
  'Yadokarivirales': '#867fdf',
  'Blubervirales': '#ccaaff',
  'Ortervirales': '#eeaaff'}
+
 def show_palette(palette:Dict[str,Dict[str,str]]):
     fig, ax = plt.subplots(figsize=(15, 10))
     ax:Axes

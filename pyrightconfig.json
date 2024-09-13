@@ -24,5 +24,6 @@
       "*dmnd",
       "*fasta",
       "*fa"
-    ]
+    ],
+    "reportPrivateImportUsage":false,
 }
