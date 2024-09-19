@@ -1,5 +1,5 @@
 # %%
-from typing import Union,List,Any,Dict,Optional
+from typing import Union,List,Any,Dict,Optional,Callable,Literal,Tuple
 import pickle as pkl
 import pandas as pd
 from torch import nn
@@ -31,11 +31,17 @@ import sys
 import networkx as nx
 # from PyPDF2 import PdfReader, PdfWriter
 from torch.utils.tensorboard import SummaryWriter
-def hide_spline(ax:Axes):
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
+import matplotlib.path as mpath
+from logging import warning
+def hide_spline(ax:Axes,hide:str='trlb'):
+    if 't' in hide:
+        ax.spines['top'].set_visible(False)
+    if 'r' in hide:    
+        ax.spines['right'].set_visible(False)
+    if 'l' in hide:
+        ax.spines['left'].set_visible(False)
+    if 'b' in hide:
+        ax.spines['bottom'].set_visible(False)
     
 def circle(center:tuple,outer:tuple,**kwargs):
     '''
@@ -44,33 +50,51 @@ def circle(center:tuple,outer:tuple,**kwargs):
     radius = ((center[0]-outer[0])**2+
                 (center[1]-outer[1])**2)**0.5
     return plt.Circle((center[0], center[1]), radius,**kwargs)
-    
+xkcd_color=lambda x:mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{x}'])
 class OrderManager:
-    def __init__(self,order_dict:dict,level_names:Optional[list]=None, #device:Union[str,int]='cpu',
-                 color_levels:List[str]=['pinkish red','purply','ocean','peach'],
-                 layout_prog="twopi"
+    '''
+    `hierarchical_labels` : dict,{L1label:{L2label1:{...:[LastLabel1,LastLabel2]}}}  
+    `level_names`         : list for each levels' name  
+    `level_colors`        : str, color for each level, check https://xkcd.com/color/rgb/ for viable colors.  
+    `layout_prog`         : str, engine for layout calculation, check https://graphviz.org/docs/layouts/  
+    `layout_modification` : Callable,  
+            if you want to edit the layout properties, add them to the graph property  e.g. :  
+            order_manager.order_graph.graph['rankdir']="LR"  
+            order_manager.order_graph.nodes['root']['root']=True  
+
+    order properties:  
+    - `levels`                   : [[L1label1,L1label2,...],[L2label1,L2label2,...]]  
+    - `total_level`              : len(levels)  
+    - `level_names`              : level_names  
+    - `hierarchical_labels`      : {L1label1:{L2label1:{...:[LastLabel1,LastLabel2]}}}   
+    - `numeric_hierarchy`        : {L1Idx1:{L2Idx1:{...:[LastIdx1,LastIdx2]}}}   
+    - `peeled_numeric_hierarchy` : [ {L1Idx1:[L2Idx1,L2Idx2,...],L1Idx2:[L2Idx3,L2Idx4,...]},  
+                                        {L2Idx1:[L3Idx1,L3Idx2,...],...},{}]  
+    - `null_level_dict`          : {"root's Null": 0,"Orthornavirae's Null": 1,"Negarnaviricota's Null's Null": 3,...}  
+
+    visual properties  
+    - `max_colors`               : [(r_i,g_i,b_i) for i in levels]  
+    - `color_levels`             : [`LinearSegmentedColormap`_i for i in levels]  
+    - `color_names`              : level_colors input  
+    - `order_graph`              :  `DiGraph`  
+    - `graph_pos`                : calculated position for `order_graph`  
+
+    TODO manage null values. 
+    '''
+    def __init__(self,
+        hierarchical_labels:dict,
+        level_names:Optional[list]=None, 
+        level_colors:List[str]=['pinkish red','purply','ocean','peach'],
+        layout_prog:str="twopi",
+        layout_modification:Callable[[nx.DiGraph],None]=lambda x:None
                  ):
-        '''
+
+        self._parse_order(hierarchical_labels,level_names)
+        self._parse_visual(level_colors=level_colors,layout_prog=layout_prog,
+                layout_modification=layout_modification)
         
-        # device: Only used in `idx_to_onehot`
-        remove device,default to cpu, might be moved to GPU in later steps
-        color levels: 
-        check https://xkcd.com/color/rgb/ for viable colors. 
-        '''
-        # self.device=device
-        self._parse_order(order_dict)
         
-        if level_names is None:
-            self.level_names=[str(i+1) for i in range(len(self.levels))]
-        else:
-            assert len(level_names)==len(self.levels)
-            self.level_names=level_names
-            
-        assert len(color_levels)>=len(self.levels)
-        self._gen_visual_props(color_levels=color_levels)
-        self._gen_order_graph(layout_prog)
-        
-    def _parse_order(self,order_dict:dict):
+    def _parse_order(self,hierarchical_labels:dict,level_names):
         def smart_fetch_list(l:list,idx:int,init_l=[])->list:
             while len(l)<idx+1:
                 l.append(init_l)
@@ -101,7 +125,6 @@ class OrderManager:
             else:
                 raise ValueError(f'{d}')
             return o
-
         def safe_update_dict(d1:dict,d2:dict):
             for k,v in d2.items():
                 if k not in d1:
@@ -116,7 +139,6 @@ class OrderManager:
                     else:
                         print(v)
             return d1
-
         def peel_dict(d:dict,o:list=[]):
             next_dict={}
             j=next(iter(d.values()))
@@ -134,9 +156,7 @@ class OrderManager:
                 peel_dict(next_dict,o)
             return o
         
-        def parse_order(order_dict:dict):
-            hierarchical_labels=order_dict
-            # hierarchical_labels:dict=pkl.load(open(order_file,'rb'))
+        def parse_order(hierarchical_labels:dict):
             levels=recurse_add([],hierarchical_labels)
             total_level = len(levels)
             numeric_hierarchy = recurse_w2i(levels,hierarchical_labels)
@@ -146,9 +166,23 @@ class OrderManager:
         (self.hierarchical_labels,self.levels,
          self.total_level,self.numeric_hierarchy,
          self.peeled_numeric_hierarchy
-        )=parse_order(order_dict)
+        )=parse_order(hierarchical_labels)
         
-    def _gen_visual_props(self,color_levels:List[str]):
+        if level_names is None:
+            self.level_names=[str(i+1) for i in range(len(self.levels))]
+        else:
+            assert len(level_names)==len(self.levels)
+            self.level_names=level_names
+            
+    def _parse_visual(self,level_colors:List[str],layout_prog:str,
+                      layout_modification:Callable[[nx.DiGraph],None]=lambda x:None):
+        assert len(level_colors)>=len(self.levels)
+        self.layout_prog=layout_prog
+        self.layout_modification=layout_modification
+        self._gen_visual_props(level_colors=level_colors)
+        self._gen_order_graph(layout_prog,layout_modification)
+        
+    def _gen_visual_props(self,level_colors:List[str]):
         def recur_size_count(hierarchical_labels:dict,cur_key:str='root',null_level=0):
             o={}
             null_level_dict={}
@@ -176,16 +210,16 @@ class OrderManager:
             return size_count,hierarchical_labels_,null_level_dict
         (self.size_count,self.split_null_hierarchical_labels,
          self.null_level_dict)=recur_size_count(self.hierarchical_labels)
-        if color_levels[0][0]!='#':
-            max_colors=[mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{i}']) for i in color_levels]
+        if level_colors[0][0]!='#':
+            max_colors=[xkcd_color(i) for i in level_colors] #mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{i}']
         else:
-            max_colors=[mcolors.to_rgb(i) for i in color_levels]
+            max_colors=[mcolors.to_rgb(i) for i in level_colors]
         self.max_colors=max_colors
         self.color_levels=[mcolors.LinearSegmentedColormap.from_list(
             name,[[1-(1-j)*0.05 for j in max_colors[i]],max_colors[i]]) for i,name in enumerate(self.level_names)]
-        self.color_names:List[str]=color_levels
+        self.color_names:List[str]=level_colors
         
-    def _gen_order_graph(self,layout_prog:str):
+    def _gen_order_graph(self,layout_prog:str,layout_modification:Callable[[nx.DiGraph],None]=lambda x:None):
         '''
         if you want to edit the layout properties, add them to the graph property
         
@@ -205,7 +239,8 @@ class OrderManager:
                         G.add_edge(k,i)
                         to_graph(G,sub_d,i)
         to_graph(self.order_graph,self.split_null_hierarchical_labels)
-        self.graph_pos = nx.nx_agraph.graphviz_layout(self.order_graph, prog=layout_prog)
+        layout_modification(self.order_graph)
+        self.graph_pos:Dict[str,Tuple[float,float]] = nx.nx_agraph.graphviz_layout(self.order_graph, prog=layout_prog)
         
     def order_to_idx(self,order_list:List[str])->List[int]:
         o=[]
@@ -213,7 +248,7 @@ class OrderManager:
             o.append(level.index(taxo))
         return o
     
-    def idx_to_onehot(self,idx_list:Union[List[int],List[torch.Tensor]],device:Optional[str]='cpu')->List[torch.Tensor]:
+    def idx_to_onehot(self,idx_list:List[Union[int,torch.Tensor]],device:Optional[str]='cpu')->List[torch.Tensor]:
         # if device is None: device=self.device
         o=[]
         if isinstance(idx_list[0],int):
@@ -226,20 +261,31 @@ class OrderManager:
                 o.append(h)
         return o
     
-    def idx_to_order(self,idx_list:List[torch.Tensor])->List[str]:
+    def idx_to_order(self,idx_list:List[torch.Tensor],need_argmax:bool=False)->List[str]|List[List[str]]:
         '''
-        TODO: more possible format of input
+        `idx_list` : List[torch.Tensor]  
+        `need_argmax`: <br>
+            - False for legacy;  
+            - True: process the direct output of `HierarESM`  
         '''
+        if not need_argmax:
+            warning('`need_argmax` : eprecation use! modify your dataflow!')
         o=[]
         for i,level in enumerate(self.levels):
-            idx_l=idx_list[i].tolist() if isinstance(
-                idx_list[i],torch.Tensor) else idx_list[i]
+            if need_argmax:
+                idx_l=torch.argmax(idx_list[i],dim=1).tolist()
+            else:
+                idx_l=idx_list[i].tolist() if isinstance(
+                    idx_list[i],torch.Tensor) else idx_list[i]
             o.append([level[j] for j in idx_l])
+        if need_argmax:
+            o=[list(row) for row in zip(*o)]
         return o
     
     def order_to_onehot(self,order_list:List[str])->List[torch.Tensor]:
         return self.idx_to_onehot(self.order_to_idx(order_list))
 
+    #-- classification graph
     def distribution_to_color_dict(self,distribution:List[torch.Tensor],batch_i:int=0)->Dict[str,tuple]:
         '''
         distribution: output from models or gt label after idx_to_onehot
@@ -264,26 +310,57 @@ class OrderManager:
         return color_dict
     
     def draw_classification_view(self,color_dict:Dict[str,tuple],ax:Axes,
-            node_size=300,null_color=(0,0,0,0)):
+            node_size=300,null_color=(0,0,0,0),
+            to_label:Callable[[str],str]=lambda x:x if 'Null' not in x else 'Null',
+            level_boundary:Literal['circle','vertical','none']='none',
+            node_shape:str|mpath.Path='o',arrowstyle='->',connectionstyle='arc3'):
         '''
         must work on a given ax
         '''
-        to_label=lambda x:x if 'Null' not in x else 'Null'
+        # to_label=lambda x:x if 'Null' not in x else 'Null'
+        # def to_label(x:str):
+        if level_boundary=='none':
+            level_boundary={'twopi':'circle','dot':'vertical'}.get(self.layout_prog,'none')
+
+        if level_boundary=='circle':
+            for i in range(len(self.levels)):
+                # edgecolor=self.color_names[i] if self.color_names[i][0
+                #         ]=='#' else mcolors.XKCD_COLORS[f'xkcd:{self.color_names[i]}']
+                circle_=circle(self.graph_pos['root'],self.graph_pos[self.levels[i][1]],
+                            **dict(fill=False, edgecolor=self.max_colors[i], 
+                                linestyle='--', linewidth=2, alpha=0.5))
+                ax.add_patch(circle_)
+        elif level_boundary=='vertical':
+            graph_xs=list(set([i[0] for i in self.graph_pos.values()]))
+            graph_xs.sort()
+            graph_ys=[i[1] for i in self.graph_pos.values()]
+            graph_ymin,graph_ymax=min(graph_ys),max(graph_ys)
+            vext=0.05*(graph_ymax-graph_ymin)
+            # for i,x,color in zip(range(self.total_level),graph_xs,self.max_colors):
+            ax.vlines(graph_xs[1:],graph_ymin-vext,graph_ymax+vext,colors=self.max_colors,
+                        linestyle='--', linewidth=1, alpha=0.5)
+        elif level_boundary=='none':
+            pass
+        else:
+            raise ValueError(f'level_boundary: {level_boundary}')
+
+        dimgrey=xkcd_color('dark grey')
+
         G,pos=self.order_graph,self.graph_pos
-        nx.draw_networkx_nodes(G,pos,ax=ax,node_size=node_size
-            ,node_color=[color_dict.get(n,null_color) for n in G],edgecolors='grey')
-        nx.draw_networkx_edges(G,pos,ax=ax,arrowstyle='->',edge_color='grey')
-        nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G},ax=ax,font_size=10,font_color='dimgrey')
-        for i in range(len(self.levels)):
-            # edgecolor=self.color_names[i] if self.color_names[i][0
-            #         ]=='#' else mcolors.XKCD_COLORS[f'xkcd:{self.color_names[i]}']
-            circle_=circle(self.graph_pos['root'],self.graph_pos[self.levels[i][1]],
-                        **dict(fill=False, edgecolor=self.max_colors[i], 
-                            linestyle='--', linewidth=2, alpha=0.5))
-            ax.add_patch(circle_)
+        nx.draw_networkx_nodes(G,pos,ax=ax,node_size=node_size,node_shape=node_shape,
+            node_color=[color_dict.get(n,null_color) for n in G],edgecolors=dimgrey)
+        nx.draw_networkx_edges(G,pos,ax=ax,arrowstyle=arrowstyle,edge_color=dimgrey,connectionstyle=connectionstyle)
+        nx.draw_networkx_labels(G,pos,labels={n:to_label(n) for n in G},ax=ax,font_size=11,font_color=dimgrey,font_weight='heavy')
+        #{a numeric value in range 0-1000, 
+        # 'ultralight', 'light', 'normal', 
+        # 'regular', 'book', 'medium', 'roman', 
+        # 'semibold', 'demibold', 'demi', 'bold', 
+        # 'heavy', 'extra bold', 'black'}
+
         hide_spline(ax)
         return ax
     
+    #-- bar plots
     def cal_true_probs(self,pred:List[torch.Tensor],true:List[torch.Tensor],batch_i:int=0):
         probabs=[]
         for level_id,level in enumerate(self.levels):
@@ -326,13 +403,15 @@ class OrderManager:
         ax.tick_params(axis='x', colors='gray')
         ax.tick_params(axis='y', colors='gray')
     
+
+
 # %%
 def cal_accuracy(predictions:torch.Tensor, labels:torch.Tensor):
     '''Calculates the accuracy of the prediction.
        prediction: the layer output
        label: the [bz,1] tensor gt id instead of onehot 
     '''
-
+    raise RuntimeError('`cal_accuracy` managed by model.py now')
     num_data = labels.size()[0]
     predicted = torch.argmax(predictions, dim=1)
 

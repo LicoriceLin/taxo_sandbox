@@ -23,7 +23,17 @@
       "diamond",
       "*dmnd",
       "*fasta",
-      "*fa"
+      "*fa",
+      "train/",
+      "infer/",
     ],
-    "reportPrivateImportUsage":false,
+    "reportPrivateImportUsage":"information",
+    "reportAttributeAccessIssue":"information",
+    "reportOptionalMemberAccess":"information",
+    "reportIncompatibleMethodOverride":"information",
+    "reportArgumentType":"information",
+    "reportAssignmentType": "information",
+    "reportReturnType": "information",
+    "reportPossiblyUnboundVariable": "information",
+    
 }

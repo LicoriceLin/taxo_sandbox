@@ -15,4 +15,5 @@ tmp*.py
 *.pkl
 tmp*
 train
+infer
 legacy_train/
