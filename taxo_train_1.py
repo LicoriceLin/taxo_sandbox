@@ -7,7 +7,7 @@ import torch
 # from transformers import EsmModel, EsmConfig, EsmTokenizer
 # from torch.nn.modules.loss import _Loss
 # import torch.nn.functional as F
-from torch.optim import Adam
+from torch.optim import Adam,AdamW
 # import random
 import numpy as np
 import logging
@@ -57,7 +57,7 @@ if __name__=='__main__':
     # torch.save(hierar_esmmodel.state_dict(), f'seed-{seed}-ep-0.pt')
     # sys.exit(0)
     hierar_loss=HierarchicalLossNetwork(order_manager)
-    optimizer = Adam(hierar_esmmodel.parameters(), lr=1e-4)
+    optimizer = AdamW(hierar_esmmodel.parameters(), lr=1e-4)
 
     dataset=ConcatProteinDataset('taxo_data/proseq_taxo_1.pkl',order_manager)
     trainset,valset=random_split(dataset,[0.9,0.1])
@@ -111,6 +111,7 @@ if __name__=='__main__':
             accuracies={k:cal_accuracy(i,j) for k,i,j in zip(order_manager.level_names,x_s,y_s)}
             writer.add_scalars('valid/accuracy',accuracies,global_step)
             writer.add_scalar('valid/loss',hierar_loss(x_s,y_s,'cpu').item(),global_step)
+            writer.add_scalar('val_loss',hierar_loss(x_s,y_s,'cpu').item(),global_step)
             writer.add_embedding(mat=torch.concat(ebs,dim=0),
                                 metadata=labels,
                                 global_step=global_step,

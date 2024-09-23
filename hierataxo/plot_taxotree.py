@@ -76,6 +76,32 @@ order_manager=OrderManager(pkl.load(open('taxo_data/hierarchy_order.pkl','rb'))[
     layout_prog='dot',layout_modification=layout_modification)
 manual_modify_graph_pos(order_manager.graph_pos)
 
+
+def configure_rcParams():
+    c_rcParams=plt.rcParamsDefault
+    plt.rcParams.update(plt.rcParamsDefault)
+    plt.rcParams.update({
+        # "text.usetex": True,
+        # "text.latex.preamble": r"\usepackage{amsmath}",
+        'svg.fonttype':'none',
+        'font.sans-serif':['Arial','Helvetica',
+            'DejaVu Sans',
+            'Bitstream Vera Sans',
+            'Computer Modern Sans Serif',
+            'Lucida Grande',
+            'Verdana',
+            'Geneva',
+            'Lucid',
+            'Avant Garde',
+            'sans-serif'],
+        "pdf.use14corefonts":False,
+        'pdf.fonttype':42,
+        'text.color':xkcd_color('dark grey'),
+        'axes.labelweight':'heavy',
+        'axes.titleweight':'extra bold'
+            })
+    return c_rcParams
+
 def standard_classification_view(
         color_dict:Dict[str,tuple],
         ax:Axes,
@@ -86,28 +112,29 @@ def standard_classification_view(
     please ensure the ax takes up a 6*12 space
     '''
     if set_rcParams:
-        c_rcParams=plt.rcParamsDefault
-        plt.rcParams.update(plt.rcParamsDefault)
-        plt.rcParams.update({
-            # "text.usetex": True,
-            # "text.latex.preamble": r"\usepackage{amsmath}",
-            'svg.fonttype':'none',
-            'font.sans-serif':['Arial','Helvetica',
-                'DejaVu Sans',
-                'Bitstream Vera Sans',
-                'Computer Modern Sans Serif',
-                'Lucida Grande',
-                'Verdana',
-                'Geneva',
-                'Lucid',
-                'Avant Garde',
-                'sans-serif'],
-            "pdf.use14corefonts":False,
-            'pdf.fonttype':42,
-            'text.color':xkcd_color('dark grey'),
-            'axes.labelweight':'heavy',
-            'axes.titleweight':'extra bold'
-                })
+        c_rcParams=configure_rcParams()
+        # c_rcParams=plt.rcParamsDefault
+        # plt.rcParams.update(plt.rcParamsDefault)
+        # plt.rcParams.update({
+        #     # "text.usetex": True,
+        #     # "text.latex.preamble": r"\usepackage{amsmath}",
+        #     'svg.fonttype':'none',
+        #     'font.sans-serif':['Arial','Helvetica',
+        #         'DejaVu Sans',
+        #         'Bitstream Vera Sans',
+        #         'Computer Modern Sans Serif',
+        #         'Lucida Grande',
+        #         'Verdana',
+        #         'Geneva',
+        #         'Lucid',
+        #         'Avant Garde',
+        #         'sans-serif'],
+        #     "pdf.use14corefonts":False,
+        #     'pdf.fonttype':42,
+        #     'text.color':xkcd_color('dark grey'),
+        #     'axes.labelweight':'heavy',
+        #     'axes.titleweight':'extra bold'
+        #         })
 
     order_manager.draw_classification_view(color_dict,ax,null_color=(0.8,0.8,0.8),
         to_label=to_label,node_size=4200,level_boundary='none',

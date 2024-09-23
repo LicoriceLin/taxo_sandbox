@@ -29,7 +29,7 @@ from transformers import EsmModel, EsmConfig, EsmTokenizer
 from captum.attr import IntegratedGradients
 from torch.nn.modules.activation import MultiheadAttention
 import lightning as L
-
+from lightning.pytorch.callbacks import Callback
 from .util import OrderManager
 
 class ClassificationHead(nn.Module):
@@ -148,8 +148,10 @@ class HierarESM(L.LightningModule):
             alpha:float=0.5, beta:float=0.8, 
             p_loss:float=3.,a_incremental:float=1.3,
             #
-            optimizer_kwargs:Dict[str,Any]={'backbone_lr':1e-4,'head_lr':1e-3,'weight_decay':0.01},
-            scheduler_kwargs:Dict[str,Any]={'warmup_iter_1':20,'warmup_iter_2':30,'warmup_lr':1e-10}
+            optimizer_kwargs:Dict[str,Any]={
+                'backbone_lr':1e-4,'head_lr':1e-3,'weight_decay':0.01},
+            scheduler_kwargs:Dict[str,Any]={
+                'warmup_iter_1':20,'warmup_iter_2':30,'warmup_lr':1e-10,'exp_gamma':0.98}
             ):
 
         super().__init__()
@@ -191,6 +193,32 @@ class HierarESM(L.LightningModule):
                     name[1]=='encoder' and (int(names[3]))<self.to_freeze):
                     param.requires_grad = False
 
+    def _backbone_freeze(self):
+        for param in self.backbone.embeddings.parameters():
+            param.requires_grad = False
+        for param in self.backbone.encoder.parameters():
+            param.requires_grad = False
+        self.backbone.embeddings.eval()
+        self.backbone.encoder.eval()
+        
+    def _backbone_unfreeze(self):
+        for param in self.backbone.embeddings.parameters():
+            param.requires_grad = True
+        for param in self.backbone.encoder.parameters():
+            param.requires_grad = True
+        self.backbone.embeddings.train()
+        self.backbone.encoder.train()
+        
+    # def configure_callbacks(self):
+    #     return []
+    def on_train_start(self):
+        self._backbone_freeze()
+        
+    def on_train_epoch_start(self):
+        warmup_iter_1 = self.scheduler_kwargs.get('warmup_iter_1',20)
+        if self.trainer.current_epoch>=warmup_iter_1:
+            self._backbone_unfreeze()
+    
     def _make_transformer_hierar_layers(self):
         #TODO use nn.TransformerEncoder with 2 layers
         self.opt_initiator=nn.TransformerEncoderLayer(
@@ -214,23 +242,13 @@ class HierarESM(L.LightningModule):
             setattr(self,f'head_{i+1}',ClassificationHead(
                 self.hidden_size,inner_dim,num_classes))
             
-    def forward(self, 
+    def _backbone(self, 
         attention_mask:torch.Tensor,
         sentence_mask:torch.Tensor,
         input_ids:Optional[torch.Tensor]=None,
         inputs_embeds:Optional[torch.Tensor]=None,
         **kwargs):
-        '''
-        'attention_mask':[batch_size,max_domain,hidden_size]
-        'sentence_mask':[batch_size,max_domain], 
-        'input_ids': usually from datasets;  
-        'inputs_embeds' : usually from integrated ingradient workflows;  
-        
-        other parameters would be ignored, so feel free to use `module.forward(**batch)` 
 
-
-        
-        '''
         device=sentence_mask.device
         if input_ids is not None:
             ipt={'input_ids':input_ids.view(-1,self.max_length),
@@ -266,12 +284,86 @@ class HierarESM(L.LightningModule):
         output=torch.zeros(bs,order_count,es,dtype=ori_ebs.dtype,device=device)
         output=torch.concat((ebs,output),dim=1)
         output=self.opt_initiator(output,src_key_padding_mask=src_key_padding_mask)
+        return output,opt_size,bs,ss,ebs,device,memory_key_padding_mask
+    
+    def _gradient(self,attention_mask:torch.Tensor,
+            sentence_mask:torch.Tensor,
+            input_ids:torch.Tensor,
+            taxo:torch.Tensor,
+            n_steps:int=100,internal_batch_size:int=5,
+            bg_token='<mask>',**kwargs)->torch.Tensor:
+        '''
+        Usage now:
+        model.to(0)
+        batch=model.transfer_batch_to_device(datamodule.dataset.fetch_single(1),model.device,0)
+        mapping_gradients=model._gradient(**batch)
+        TODO make it an option for test step. make sure input could be multiple bacthes.
+
+        Now output is a tensor of `valid tokens`*`embedding size`
+        TODO
+        Post Process needed to chunk valid tokens into `domains` and map them back to aa.
+
+        '''
+        self.backbone.embeddings.token_dropout=False
+        self.backbone.config.token_dropout=False
+        embedding_layer = self.backbone.get_input_embeddings()
+
+        fake_ids=torch.clone(input_ids).detach()
+        fake_ids[fake_ids>3]=self.tokenizer.get_vocab()[bg_token]
+        inputs_embeds=embedding_layer(input_ids)
+        fake_inputs_embeds=embedding_layer(fake_ids)
+        def forward_func(inputs_embeds:torch.Tensor,attention_mask:torch.Tensor,domains_mask:torch.Tensor):
+            return self.forward(**{'input_ids':None,'inputs_embeds':inputs_embeds,
+                    'attention_mask':attention_mask,'sentence_mask':domains_mask,
+                    'need_pred':True,'need_embed':False,})[-1]
+        ig = IntegratedGradients(forward_func)
+
+        o_attribute=ig.attribute(inputs_embeds,fake_inputs_embeds,
+            target=taxo[:,-1],
+            internal_batch_size=internal_batch_size,
+            n_steps=n_steps,
+            additional_forward_args=(attention_mask,sentence_mask))
+        mapping_gradients=o_attribute[attention_mask.bool()].detach()
+
+        self.backbone.embeddings.token_dropout=True
+        self.backbone.config.token_dropout=True
+
+        return mapping_gradients
+
+    def forward(self, 
+        attention_mask:torch.Tensor,
+        sentence_mask:torch.Tensor,
+        input_ids:Optional[torch.Tensor]=None,
+        inputs_embeds:Optional[torch.Tensor]=None,
+        need_pred:bool=True,
+        need_embed:bool=False,
+        **kwargs):
+        '''
+        'attention_mask':[batch_size,max_domain,hidden_size]
+        'sentence_mask':[batch_size,max_domain], 
+        'input_ids': usually from datasets;  
+        'inputs_embeds' : usually from integrated ingradient workflows;  
         
-        #auto-regression
+        `need_pred` : usual output
+        `need_embed` : for ana
+        other parameters would be ignored, so feel free to use `module.forward(**batch)` 
+
+        --- ---
+        return:
+        o_pred:List[torch.Tensor] + o_eb:List[torch.Tensor]
+        '''
+        # device=sentence_mask.device
+        # print(kwargs.keys())
+        (output,opt_size,bs,ss,ebs,device,memory_key_padding_mask
+         )=self._backbone(attention_mask,sentence_mask,input_ids,inputs_embeds,**kwargs)
+        # auto-regression
+        # TODO confirm the correctness of `tgt_mask``
         tgt_mask=torch.triu(torch.ones((opt_size, opt_size), device=device), diagonal=1).bool()
         tgt_key_padding_mask=torch.ones(bs,opt_size,device=device).bool()
         tgt_key_padding_mask[:,:ss]=False
-        o:List[torch.Tensor]=[]
+        o_pred:List[torch.Tensor]=[]
+        o_eb:List[torch.Tensor]=[]
+        # if need_pred:
         for i,l in enumerate(self.order_manager.levels):
             tgt_key_padding_mask[:,ss+i]=False
             decoder=getattr(self,f'decoder_{i+1}')
@@ -279,8 +371,13 @@ class HierarESM(L.LightningModule):
             output=decoder(tgt=output,memory=ebs,tgt_mask=tgt_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask)
-            o.append(head(output[:,ss+i,:]))
-        return o
+            eb=output[:,ss+i,:]
+            if need_embed:
+                o_eb.append(eb)
+            if need_pred:
+                o_pred.append(head(eb))
+        # if need_embed:
+        return o_pred+o_eb
     
     def training_step(self, batch, batch_idx, dataloader_idx=0):
         predictions=self.forward(**batch)
@@ -378,19 +475,45 @@ class HierarESM(L.LightningModule):
                 "name": 'scheduler',
             }}
 
-    def _gradient(self):
-        pass
+    @torch.inference_mode()
+    def _attention(self,
+            multihead_attn:MultiheadAttention,
+            **kwargs):
+        '''
+        so far only accept single entry input
+        return:
+        attention_weight(remove paddings),ori_weight,q_mask,tmask
+        '''
+        keeper={}
+        def input_hook(module, args,kargs,output):
+            keeper['args']=args
+            keeper['kargs']=kargs
+        hook_handle = multihead_attn.register_forward_hook(input_hook,with_kwargs=True)
+        _=self.forward(**kwargs)
+        kargs={}; kargs.update(keeper['kargs'])
+        kargs['need_weights']=True
+        attention_weight:torch.Tensor=multihead_attn(*keeper['args'],**kargs)[1]
+        # return kargs
+        target_mask:torch.Tensor=~kargs['key_padding_mask'].bool()
+        query_mask=torch.ones(target_mask.shape[0],attention_weight.shape[1],
+                device=attention_weight.device).bool()
+        query_mask[:,:target_mask.shape[1]]=target_mask
+        hook_handle.remove()
+        return (attention_weight[0,query_mask[0]][:,target_mask[0]],
+                attention_weight,query_mask,target_mask)
 
-    def _embed(self):
-        pass
-        
-    def _attention(self):
-        pass
+    @property
+    def mhattenions(self):
+        # if not hasattr(self,'_mhattenions'):
+        _mhattenions=[ self.opt_initiator.self_attn] +  [
+            getattr(self,f'decoder_{i+1}').layers[n].multihead_attn 
+            for i in range(self.order_manager.total_level) 
+            for n in range(self.num_block_layers)] +[
+            getattr(self,f'decoder_{i+1}').layers[n].self_attn 
+            for i in range(self.order_manager.total_level) 
+            for n in range(self.num_block_layers)]
+        return _mhattenions
     
-    def _infer(self):
-        pass
-
-
 def cal_accuracy(predictions:List[torch.Tensor],true_labels:torch.Tensor,
         level_names:List[str],prefix:str='')->Dict[str,float]:
     o={}

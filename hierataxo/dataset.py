@@ -80,6 +80,9 @@ class ConcatProteinDataModule(L.LightningDataModule):
             self.trainset,self.valset,self.testset=random_split(self.dataset,self.split_ratio)
 
     def train_dataloader(self):
+        '''
+        TODO loader with multiple length & domain padding size
+        '''
         return DataLoader(self.trainset, batch_size=self.train_bs, shuffle=True, 
             num_workers=min(self.train_bs,16),collate_fn=self.dataset.collate_fn)
 
@@ -88,8 +91,10 @@ class ConcatProteinDataModule(L.LightningDataModule):
             num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
 
     def test_dataloader(self):
-        return DataLoader(self.testset, batch_size=self.infer_bs, shuffle=False, 
+        return DataLoader(self.dataset, batch_size=self.infer_bs, shuffle=False,
             num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
+        # return DataLoader(self.testset, batch_size=self.infer_bs, shuffle=False, 
+        #     num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
     
     def predict_dataloader(self):
         return DataLoader(self.dataset, batch_size=self.infer_bs, shuffle=False, 
@@ -166,7 +171,7 @@ class ConcatProteinDataset(Dataset):
         usually for debug-only usage
         '''
         entry=self[idx]
-        for k,v in entry:
+        for k,v in entry.items():
             if isinstance(v,torch.Tensor):
                 entry[k]=torch.unsqueeze(v,0)
             else:

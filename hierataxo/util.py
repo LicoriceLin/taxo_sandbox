@@ -362,10 +362,13 @@ class OrderManager:
     
     #-- bar plots
     def cal_true_probs(self,pred:List[torch.Tensor],true:List[torch.Tensor],batch_i:int=0):
+        '''
+        true: onehot tensor
+        '''
         probabs=[]
         for level_id,level in enumerate(self.levels):
             dist=F.softmax(pred[level_id][batch_i].float().detach().to('cpu'),dim=-1)
-            true_label=true[level_id][batch_i]
+            true_label=true[level_id][batch_i].argmax()
             probabs.append(dist[true_label].item())
         return probabs
     
