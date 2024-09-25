@@ -37,23 +37,31 @@ from typing import Callable
 
 class ConcatProteinDataModule(L.LightningDataModule):
     def __init__(self,
-        order_manager:OrderManager,
+        # order_manager:OrderManager,
         pkl_path:str,
         model_name:str='facebook/esm2_t6_8M_UR50D',
         max_domain:int=15,
         max_length:int=500,
         split_ratio:List[float]=[0.9,0.09,0.01],
         train_bs:int=2,
-        infer_bs:int=25
+        infer_bs:int=25,
+        order_manager_kwargs:Dict[str,Any]={
+                'hierarchical_labels':'taxo_data/hierarchy_order_Riboviria.pkl',
+                'level_names':['Kingdom','Phylum','Class','Order'],
+                'level_colors':['pinkish red','purply','ocean','peach'],
+                'layout_prog':'dot',
+                'layout_modification':None,
+                },
         ):
         super().__init__()
-        self.order_manager=order_manager
+        self.order_manager_kwargs=order_manager_kwargs
         self.pkl_path=pkl_path
-        self.order_manager=order_manager
         self.model_name=model_name
         self.max_domain=max_domain
         self.max_length=max_length
-
+        self.save_hyperparameters()
+        
+        self.order_manager=OrderManager(**self.order_manager_kwargs)
         assert len(split_ratio)==3 and sum(split_ratio)==1
         self.split_ratio=split_ratio
         self.train_bs,self.infer_bs=train_bs,infer_bs
@@ -61,10 +69,10 @@ class ConcatProteinDataModule(L.LightningDataModule):
         #     'pkl_path','model_name','max_domain','max_length',
         #     'split_ratio','train_bs','infer_bs'
         # )
-        try:
-            self.save_hyperparameters(ignore=['order_manager'])
-        except:
-            pass
+        # try:
+        #     self.save_hyperparameters(ignore=['order_manager'])
+        # except:
+        #     pass
     # def prepare_data(self) -> None:
     #     pass
 

@@ -19,9 +19,7 @@ from typing import Dict,Tuple
 
 # fonts = font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
 
-def layout_modification(G:nx.DiGraph):
-    G.graph['rankdir']='LR'
-    G.nodes['root']['root']=True
+
 
 def manual_modify_graph_pos(graph_pos:Dict[str,Tuple[float,float]]):
     graph_xs=list(set([i[0] for i in graph_pos.values()]))
@@ -73,7 +71,7 @@ a TMP standard `OrderManager` for CM meeting ana
 '''
 order_manager=OrderManager(pkl.load(open('taxo_data/hierarchy_order.pkl','rb'))['Riboviria'],
     level_names=['Kingdom','Phylum','Class','Order'],
-    layout_prog='dot',layout_modification=layout_modification)
+    layout_prog='dot')
 manual_modify_graph_pos(order_manager.graph_pos)
 
 
@@ -108,8 +106,14 @@ def standard_classification_view(
         order_manager:OrderManager=order_manager,
         set_rcParams:bool=False):
     '''
-    TMP function for CM meeting ana
-    please ensure the ax takes up a 6*12 space
+    TMP function for CM meeting ana  
+    please ensure the ax takes up a 6*12 space  
+
+    ```
+    fig,ax=plt.subplots(1,1,figsize=(6,12))  
+    standard_classification_view(named_taxo_palette,ax,set_rcParams=True)  
+    plt.tight_layout()  
+    ```
     '''
     if set_rcParams:
         c_rcParams=configure_rcParams()

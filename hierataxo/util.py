@@ -51,6 +51,11 @@ def circle(center:tuple,outer:tuple,**kwargs):
                 (center[1]-outer[1])**2)**0.5
     return plt.Circle((center[0], center[1]), radius,**kwargs)
 xkcd_color=lambda x:mcolors.to_rgb(mcolors.XKCD_COLORS[f'xkcd:{x}'])
+
+def dot_layout_modification(G:nx.DiGraph)->None:
+    G.graph['rankdir']='LR'
+    G.nodes['root']['root']=True
+
 class OrderManager:
     '''
     `hierarchical_labels` : dict,{L1label:{L2label1:{...:[LastLabel1,LastLabel2]}}}  
@@ -58,9 +63,10 @@ class OrderManager:
     `level_colors`        : str, color for each level, check https://xkcd.com/color/rgb/ for viable colors.  
     `layout_prog`         : str, engine for layout calculation, check https://graphviz.org/docs/layouts/  
     `layout_modification` : Callable,  
-            if you want to edit the layout properties, add them to the graph property  e.g. :  
+        if you want to edit the layout properties, add them to the graph property  e.g. :  
             order_manager.order_graph.graph['rankdir']="LR"  
             order_manager.order_graph.nodes['root']['root']=True  
+            tmp default: for 'twopi' use None, for 'dot' use `dot_layout_modification`  
 
     order properties:  
     - `levels`                   : [[L1label1,L1label2,...],[L2label1,L2label2,...]]  
@@ -82,13 +88,16 @@ class OrderManager:
     TODO manage null values. 
     '''
     def __init__(self,
-        hierarchical_labels:dict,
+        hierarchical_labels:dict|str,
         level_names:Optional[list]=None, 
         level_colors:List[str]=['pinkish red','purply','ocean','peach'],
         layout_prog:str="twopi",
         layout_modification:Callable[[nx.DiGraph],None]=lambda x:None
                  ):
-
+        if isinstance(hierarchical_labels,str):
+            hierarchical_labels=pkl.load(open(hierarchical_labels,'rb'))
+        if layout_prog=='dot' and layout_modification==None:
+            layout_modification=dot_layout_modification
         self._parse_order(hierarchical_labels,level_names)
         self._parse_visual(level_colors=level_colors,layout_prog=layout_prog,
                 layout_modification=layout_modification)

@@ -1,12 +1,15 @@
-from typing import Union,List,Any,Dict,Optional
+from typing import Union,List,Any,Dict,Optional,Callable
+from typing_extensions import override
 import pickle as pkl
 import pandas as pd
 import numpy as np
+import logging
 
 from torch import nn
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam,AdamW
+from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import LambdaLR,ExponentialLR,ChainedScheduler
 from transformers import EsmModel, EsmConfig, EsmTokenizer
 
@@ -29,8 +32,12 @@ from transformers import EsmModel, EsmConfig, EsmTokenizer
 from captum.attr import IntegratedGradients
 from torch.nn.modules.activation import MultiheadAttention
 import lightning as L
+import lightning.pytorch as pl
+# from lightning.pytorch.core.optimizer import LightningOptimizer
 from lightning.pytorch.callbacks import Callback
 from .util import OrderManager
+from lightning.pytorch.callbacks.finetuning import BaseFinetuning,multiplicative,MisconfigurationException
+log = logging.getLogger(__name__)
 
 class ClassificationHead(nn.Module):
     def __init__(
@@ -136,7 +143,8 @@ class HierarESM(L.LightningModule):
             dicts for overriding default args, check `configure_optimizers`
     '''
     
-    def __init__(self,order_manager:OrderManager,
+    def __init__(self,
+            # order_manager:OrderManager,
             model_name:str='facebook/esm2_t6_8M_UR50D',
             max_length:int=8000,
             max_domain:int=15,
@@ -145,9 +153,18 @@ class HierarESM(L.LightningModule):
             #
             num_block_layers:int=2,
             to_freeze:int=0,
-            alpha:float=0.5, beta:float=0.8, 
-            p_loss:float=3.,a_incremental:float=1.3,
+            criterion_kwargs:Dict[str,Any]={
+                'alpha':0.5, 'beta':0.8, 
+                'p_loss':3.,'a_incremental':1.3,
+                },
             #
+            order_manager_kwargs:Dict[str,Any]={
+                'hierarchical_labels':'taxo_data/hierarchy_order_Riboviria.pkl',
+                'level_names':['Kingdom','Phylum','Class','Order'],
+                'level_colors':['pinkish red','purply','ocean','peach'],
+                'layout_prog':'dot',
+                'layout_modification':None,
+                },
             optimizer_kwargs:Dict[str,Any]={
                 'backbone_lr':1e-4,'head_lr':1e-3,'weight_decay':0.01},
             scheduler_kwargs:Dict[str,Any]={
@@ -155,7 +172,7 @@ class HierarESM(L.LightningModule):
             ):
 
         super().__init__()
-        self.order_manager=order_manager
+        
         self.max_length=max_length
         self.max_domain=max_domain
         self.nhead=nhead
@@ -163,15 +180,17 @@ class HierarESM(L.LightningModule):
         self.num_block_layers=num_block_layers
         self.model_name=model_name
         self.to_freeze=to_freeze
-        self.alpha,self.beta,self.ploss,self.a_incremental=(
-            alpha,beta,p_loss,a_incremental)
+        # self.alpha,self.beta,self.ploss,self.a_incremental=(
+        #     alpha,beta,p_loss,a_incremental)
+        self.criterion_kwargs=criterion_kwargs
+        self.order_manager_kwargs=order_manager_kwargs
         self.optimizer_kwargs=optimizer_kwargs
         self.scheduler_kwargs=scheduler_kwargs
-        self.save_hyperparameters(ignore=['order_manager'])
-
+        self.save_hyperparameters() #ignore=['order_manager']
+        self.order_manager=OrderManager(**order_manager_kwargs)
         self._configure_model()
         self.criterion=HierarchicalLossNetwork(self.order_manager,
-                    alpha,beta,p_loss,a_incremental)
+                    **criterion_kwargs)
         
     def _configure_model(self):
         self.tokenizer:EsmTokenizer = EsmTokenizer.from_pretrained(self.model_name)
@@ -193,31 +212,31 @@ class HierarESM(L.LightningModule):
                     name[1]=='encoder' and (int(names[3]))<self.to_freeze):
                     param.requires_grad = False
 
-    def _backbone_freeze(self):
-        for param in self.backbone.embeddings.parameters():
-            param.requires_grad = False
-        for param in self.backbone.encoder.parameters():
-            param.requires_grad = False
-        self.backbone.embeddings.eval()
-        self.backbone.encoder.eval()
+    # def _backbone_freeze(self):
+    #     for param in self.backbone.embeddings.parameters():
+    #         param.requires_grad = False
+    #     for param in self.backbone.encoder.parameters():
+    #         param.requires_grad = False
+    #     self.backbone.embeddings.eval()
+    #     self.backbone.encoder.eval()
         
-    def _backbone_unfreeze(self):
-        for param in self.backbone.embeddings.parameters():
-            param.requires_grad = True
-        for param in self.backbone.encoder.parameters():
-            param.requires_grad = True
-        self.backbone.embeddings.train()
-        self.backbone.encoder.train()
-        
+    # def _backbone_unfreeze(self):
+    #     for param in self.backbone.embeddings.parameters():
+    #         param.requires_grad = True
+    #     for param in self.backbone.encoder.parameters():
+    #         param.requires_grad = True
+    #     self.backbone.embeddings.train()
+    #     self.backbone.encoder.train()
+
     # def configure_callbacks(self):
     #     return []
-    def on_train_start(self):
-        self._backbone_freeze()
+    # def on_train_start(self):
+    #     self._backbone_freeze()
         
-    def on_train_epoch_start(self):
-        warmup_iter_1 = self.scheduler_kwargs.get('warmup_iter_1',20)
-        if self.trainer.current_epoch>=warmup_iter_1:
-            self._backbone_unfreeze()
+    # def on_train_epoch_start(self):
+    #     warmup_iter_1 = self.scheduler_kwargs.get('warmup_iter_1',20)
+    #     if self.trainer.current_epoch>=warmup_iter_1:
+    #         self._backbone_unfreeze()
     
     def _make_transformer_hierar_layers(self):
         #TODO use nn.TransformerEncoder with 2 layers
@@ -442,39 +461,67 @@ class HierarESM(L.LightningModule):
                 getattr(self,f'head_{i+1}').parameters() 
                 for i in range(self.order_manager.total_level)
             ])
-        optimizer = Adam(params=[{'params': backbone_params,'lr':self.optimizer_kwargs.pop('backbone_lr',1e-4)},
-                                  {'params':head_params,'lr':self.optimizer_kwargs.pop('head_lr',1e-3)}],
+        backbone_lr=self.optimizer_kwargs.pop('backbone_lr',1e-4)
+        optimizer = Adam(params=[#{'params': backbone_params,'lr':self.optimizer_kwargs.pop('backbone_lr',1e-4),'name':'backbone'},
+                                  {'params':head_params,'lr':self.optimizer_kwargs.pop('head_lr',1e-3),'name':'head'}],
                           **self.optimizer_kwargs)
-        # head_optimizer = AdamW(params=head_params,
-        #                   **self.optimizer_kwargs)
-
-        exp_gamma=self.scheduler_kwargs.get('exp_gamma',0.98)
-        def warmup_exp_increase(current_step):
-            warmup_lr = self.scheduler_kwargs.get('warmup_lr',1e-10)
-            warmup_iter_1 = self.scheduler_kwargs.get('warmup_iter_1',20)
-            warmup_iter_2 = self.scheduler_kwargs.get('warmup_iter_2',30)
-            if current_step < warmup_iter_1:
-                return warmup_lr* (exp_gamma**current_step)
-            elif current_step < warmup_iter_1 + warmup_iter_2:
-                progress = (current_step - warmup_iter_1) / warmup_iter_2
-                return warmup_lr * (1 / warmup_lr) ** progress * (exp_gamma**current_step)
-            else:
-                return (exp_gamma**current_step)
-            
-        scheduler = LambdaLR(optimizer, lr_lambda=[warmup_exp_increase,lambda step: exp_gamma**step])
-        # exp_scheduler = ExponentialLR(optimizer,gamma=self.scheduler_kwargs.get('exp_gamma',0.98))
-        # scheduler = ChainedScheduler([warmup_scheduler, exp_scheduler], optimizer=optimizer)
-        # return [optimizer],[warmup_scheduler,exp_scheduler]
+        self.optimizer_kwargs['backbone_lr']=backbone_lr
+        scheduler = ExponentialLR(optimizer,gamma=self.scheduler_kwargs.get('exp_gamma',0.98))
         return {"optimizer": optimizer,
-            "lr_scheduler": {
+                "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": 'val_loss',
                 "frequency":1,
                 "interval": "epoch",
                 "strict": False,
                 "name": 'scheduler',
-            }}
+                }}
+        # head_optimizer = AdamW(params=head_params,
+        #                   **self.optimizer_kwargs)
 
+        # exp_gamma=self.scheduler_kwargs.get('exp_gamma',0.98)
+        # def warmup_exp_increase(current_step):
+        #     warmup_lr = self.scheduler_kwargs.get('warmup_lr',1e-10)
+        #     warmup_iter_1 = self.scheduler_kwargs.get('warmup_iter_1',20)
+        #     warmup_iter_2 = self.scheduler_kwargs.get('warmup_iter_2',30)
+        #     if current_step < warmup_iter_1:
+        #         return warmup_lr* (exp_gamma**current_step)
+        #     elif current_step < warmup_iter_1 + warmup_iter_2:
+        #         progress = (current_step - warmup_iter_1) / warmup_iter_2
+        #         return warmup_lr * (1 / warmup_lr) ** progress * (exp_gamma**current_step)
+        #     else:
+        #         return (exp_gamma**current_step)
+            
+        # scheduler = LambdaLR(optimizer, lr_lambda=[warmup_exp_increase,lambda step: exp_gamma**step])
+        # # exp_scheduler = ExponentialLR(optimizer,gamma=self.scheduler_kwargs.get('exp_gamma',0.98))
+        # # scheduler = ChainedScheduler([warmup_scheduler, exp_scheduler], optimizer=optimizer)
+        # # return [optimizer],[warmup_scheduler,exp_scheduler]
+        # return {"optimizer": optimizer,
+        #     "lr_scheduler": {
+        #         "scheduler": scheduler,
+        #         "monitor": 'val_loss',
+        #         "frequency":1,
+        #         "interval": "epoch",
+        #         "strict": False,
+        #         "name": 'scheduler',
+        #     }}
+
+    def configure_callbacks(self):
+        warmup_lr=self.scheduler_kwargs.get('warmup_lr',1e-10)
+        warm_up_epoch=self.scheduler_kwargs.get('warmup_iter_2',20)
+        exp_gamma=self.scheduler_kwargs.get('exp_gamma',1)
+        warm_up_pow=warmup_lr**(-1/warm_up_epoch)*exp_gamma
+
+        backbone_initial_lr=warmup_lr*self.optimizer_kwargs.get('backbone_lr',1e-10)
+        unfreeze_backbone_at_epoch=self.scheduler_kwargs.get('warmup_iter_1',20)
+
+        return [HierarBackboneFinetuning(
+            backbone_initial_lr=backbone_initial_lr,
+            unfreeze_backbone_at_epoch=unfreeze_backbone_at_epoch,
+            lambda_func = lambda epoch:warm_up_pow,
+            verbose=True,
+            )]
+    
     @torch.inference_mode()
     def _attention(self,
             multihead_attn:MultiheadAttention,
@@ -523,3 +570,115 @@ def cal_accuracy(predictions:List[torch.Tensor],true_labels:torch.Tensor,
         correct_pred = torch.sum(predict == true_labels[:,i])#.item()
         o[f'{prefix}acc_{level_name}'] = correct_pred/bs
     return o
+
+class HierarBackboneFinetuning(BaseFinetuning):
+    r"""Finetune a backbone model based on a learning rate user-defined scheduling.
+
+    When the backbone learning rate reaches the current model learning rate
+    and ``should_align`` is set to True, it will align with it for the rest of the training.
+
+    Args:
+        unfreeze_backbone_at_epoch: Epoch at which the backbone will be unfreezed.
+        lambda_func: Scheduling function for increasing backbone learning rate.
+        backbone_initial_ratio_lr:
+            Used to scale down the backbone learning rate compared to rest of model
+        backbone_initial_lr: Optional, Initial learning rate for the backbone.
+            By default, we will use ``current_learning /  backbone_initial_ratio_lr``
+        should_align: Whether to align with current learning rate when backbone learning
+            reaches it.
+        initial_denom_lr: When unfreezing the backbone, the initial learning rate will
+            ``current_learning_rate /  initial_denom_lr``.
+        train_bn: Whether to make Batch Normalization trainable.
+        verbose: Display current learning rate for model and backbone
+        rounding: Precision for displaying learning rate
+
+    Example::
+
+        >>> from lightning.pytorch import Trainer
+        >>> from lightning.pytorch.callbacks import BackboneFinetuning
+        >>> multiplicative = lambda epoch: 1.5
+        >>> backbone_finetuning = BackboneFinetuning(200, multiplicative)
+        >>> trainer = Trainer(callbacks=[backbone_finetuning])
+
+    """
+
+    def __init__(
+        self,
+        unfreeze_backbone_at_epoch: int = 10,
+        lambda_func: Callable = multiplicative,
+        backbone_initial_ratio_lr: float = 10e-2,
+        backbone_initial_lr: Optional[float] = None,
+        should_align: bool = True,
+        initial_denom_lr: float = 10.0,
+        train_bn: bool = True,
+        verbose: bool = False,
+        rounding: int = 12,
+    ) -> None:
+        super().__init__()
+
+        self.unfreeze_backbone_at_epoch: int = unfreeze_backbone_at_epoch
+        self.lambda_func: Callable = lambda_func
+        self.backbone_initial_ratio_lr: float = backbone_initial_ratio_lr
+        self.backbone_initial_lr: Optional[float] = backbone_initial_lr
+        self.should_align: bool = should_align
+        self.initial_denom_lr: float = initial_denom_lr
+        self.train_bn: bool = train_bn
+        self.verbose: bool = verbose
+        self.rounding: int = rounding
+        self.previous_backbone_lr: Optional[float] = None
+
+    @override
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "internal_optimizer_metadata": self._internal_optimizer_metadata,
+            "previous_backbone_lr": self.previous_backbone_lr,
+        }
+
+    @override
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        self.previous_backbone_lr = state_dict["previous_backbone_lr"]
+        super().load_state_dict(state_dict)
+
+    @override
+    def freeze_before_training(self, pl_module: "HierarESM") -> None:
+        self.freeze([pl_module.backbone.embeddings,pl_module.backbone.encoder])
+
+    @override
+    def finetune_function(self, pl_module: "HierarESM", epoch: int, optimizer: Optimizer) -> None:
+        """Called when the epoch begins."""
+        if epoch == self.unfreeze_backbone_at_epoch:
+            current_lr = optimizer.param_groups[0]["lr"]
+            initial_backbone_lr = (
+                self.backbone_initial_lr
+                if self.backbone_initial_lr is not None
+                else current_lr * self.backbone_initial_ratio_lr
+            )
+            self.previous_backbone_lr = initial_backbone_lr
+            self.unfreeze_and_add_param_group(
+                [pl_module.backbone.embeddings,pl_module.backbone.encoder],
+                optimizer,
+                initial_backbone_lr,
+                train_bn=self.train_bn,
+                initial_denom_lr=self.initial_denom_lr,
+            )
+            if self.verbose:
+                log.info(
+                    f"Current lr: {round(current_lr, self.rounding)}, "
+                    f"Backbone lr: {round(initial_backbone_lr, self.rounding)}"
+                )
+
+        elif epoch > self.unfreeze_backbone_at_epoch:
+            current_lr = optimizer.param_groups[0]["lr"]
+            next_current_backbone_lr = self.lambda_func(epoch + 1) * self.previous_backbone_lr
+            next_current_backbone_lr = (
+                current_lr
+                if (self.should_align and next_current_backbone_lr > current_lr)
+                else next_current_backbone_lr
+            )
+            optimizer.param_groups[-1]["lr"] = next_current_backbone_lr
+            self.previous_backbone_lr = next_current_backbone_lr
+            if self.verbose:
+                log.info(
+                    f"Current lr: {round(current_lr, self.rounding)}, "
+                    f"Backbone lr: {round(next_current_backbone_lr, self.rounding)}"
+                )
