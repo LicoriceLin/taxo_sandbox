@@ -22,19 +22,19 @@ max_length=500
 max_domain=15
 train_bs=3
 infer_bs=20
-seed=42
+seed=11
 seed_everything(seed, workers=True)
-model=HierarESM(order_manager,max_length=max_length,max_domain=max_domain,
+model=HierarESM(max_length=max_length,max_domain=max_domain,
     optimizer_kwargs={'backbone_lr':5e-5,'head_lr':1e-4,'weight_decay':0.01},
     scheduler_kwargs={'warmup_iter_1':1,'warmup_iter_2':49,'warmup_lr':1e-7,'exp_gamma':0.95})
-datamodule=ConcatProteinDataModule(order_manager,'taxo_data/proseq_taxo_1.pkl',
+datamodule=ConcatProteinDataModule('taxo_data/proseq_taxo_1.pkl',
     max_length=max_length,max_domain=max_domain,train_bs=train_bs,infer_bs=infer_bs)
 datamodule.setup('fit')
 # %%
 default_root_dir='train'
-exp_dir='lightning_exp7'
+exp_dir=f'lightning_exp8_seed{seed}'
 
-model.load_state_dict(torch.load('train/lightning_exp4/checkpoint-step=053973-val_loss=28.14.ckpt',map_location='cpu')['state_dict'])
+# model.load_state_dict(torch.load('train/lightning_exp4/checkpoint-step=053973-val_loss=28.14.ckpt',map_location='cpu')['state_dict'])
 trainer = L.Trainer(
     default_root_dir=default_root_dir, 
     accelerator='gpu',
@@ -43,8 +43,8 @@ trainer = L.Trainer(
     check_val_every_n_epoch=1,
     log_every_n_steps=1,
     precision='16-mixed',
-    # limit_train_batches=100,
-    # limit_val_batches=30,
+    # limit_train_batches=10,
+    # limit_val_batches=5,
     callbacks=[ModelCheckpoint(dirpath=default_root_dir+'/'+exp_dir,monitor='val_loss',
                     filename='checkpoint-{step:06d}-{val_loss:.2f}',save_top_k=2),
                LearningRateMonitor('epoch')],
