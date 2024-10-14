@@ -31,7 +31,7 @@ import seaborn as sns
 # %%
 # ep=6
 device=1
-batch_size=25 # maximum valid batch size on 2080Ti: 100; train: 2 (or maybe 3?)
+# batch_size=25 # maximum valid batch size on 2080Ti: 100; train: 2 (or maybe 3?)
 max_domain=15
 acc_step=20
 max_length=500

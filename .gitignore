@@ -1,6 +1,7 @@
 
 tmp/**
 output/
+output*/
 legacy/
 *data/
 __pycache__/
@@ -14,4 +15,5 @@ tmp*.py
 *.pkl
 tmp*
 train
+infer
 legacy_train/
