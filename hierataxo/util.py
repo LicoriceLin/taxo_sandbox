@@ -92,12 +92,16 @@ class OrderManager:
         level_names:Optional[list]=None, 
         level_colors:List[str]=['pinkish red','purply','ocean','peach'],
         layout_prog:str="twopi",
-        layout_modification:Callable[[nx.DiGraph],None]=lambda x:None
+        layout_modification:Callable[[nx.DiGraph],None]|None=None,
                  ):
         if isinstance(hierarchical_labels,str):
             hierarchical_labels=pkl.load(open(hierarchical_labels,'rb'))
-        if layout_prog=='dot' and layout_modification==None:
-            layout_modification=dot_layout_modification
+        if layout_modification is None:
+            if layout_prog=='dot':
+                layout_modification=dot_layout_modification
+            else:
+                layout_modification=lambda x:None
+        self.layout_modification=layout_modification
         self._parse_order(hierarchical_labels,level_names)
         self._parse_visual(level_colors=level_colors,layout_prog=layout_prog,
                 layout_modification=layout_modification)

@@ -69,7 +69,7 @@ def to_label(x:str):
 '''
 a TMP standard `OrderManager` for CM meeting ana
 '''
-order_manager=OrderManager(pkl.load(open('taxo_data/hierarchy_order.pkl','rb'))['Riboviria'],
+order_manager=OrderManager('taxo_data/hierarchy_order_Riboviria.pkl',
     level_names=['Kingdom','Phylum','Class','Order'],
     layout_prog='dot')
 manual_modify_graph_pos(order_manager.graph_pos)
@@ -96,7 +96,9 @@ def configure_rcParams():
         'pdf.fonttype':42,
         'text.color':xkcd_color('dark grey'),
         'axes.labelweight':'heavy',
-        'axes.titleweight':'extra bold'
+        'axes.titleweight':'extra bold',
+        'figure.facecolor':'none',
+        'savefig.transparent':True,
             })
     return c_rcParams
 

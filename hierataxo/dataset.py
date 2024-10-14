@@ -1,5 +1,5 @@
 # %%
-from typing import Union,List,Any,Dict,Optional
+from typing import Union,List,Any,Dict,Optional,Literal
 import pickle as pkl
 import pandas as pd
 from torch import nn
@@ -52,6 +52,7 @@ class ConcatProteinDataModule(L.LightningDataModule):
                 'layout_prog':'dot',
                 'layout_modification':None,
                 },
+        test_mode:Literal['all','test','train','valid']='all'
         ):
         super().__init__()
         self.order_manager_kwargs=order_manager_kwargs
@@ -65,6 +66,7 @@ class ConcatProteinDataModule(L.LightningDataModule):
         assert len(split_ratio)==3 and sum(split_ratio)==1
         self.split_ratio=split_ratio
         self.train_bs,self.infer_bs=train_bs,infer_bs
+        self.test_mode=test_mode
         # self.save_hyperparameters(
         #     'pkl_path','model_name','max_domain','max_length',
         #     'split_ratio','train_bs','infer_bs'
@@ -84,8 +86,8 @@ class ConcatProteinDataModule(L.LightningDataModule):
             model_name=self.model_name,
             max_length=self.max_length,
             max_domain=self.max_domain)
-        if stage in ['fit','test'] :
-            self.trainset,self.valset,self.testset=random_split(self.dataset,self.split_ratio)
+        # if stage in ['fit','test'] :
+        self.trainset,self.valset,self.testset=random_split(self.dataset,self.split_ratio)
 
     def train_dataloader(self):
         '''
@@ -99,11 +101,19 @@ class ConcatProteinDataModule(L.LightningDataModule):
             num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
 
     def test_dataloader(self):
-        return DataLoader(self.dataset, batch_size=self.infer_bs, shuffle=False,
-            num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
-        # return DataLoader(self.testset, batch_size=self.infer_bs, shuffle=False, 
-        #     num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
-    
+        if self.test_mode=='all':
+            return DataLoader(self.dataset, batch_size=self.infer_bs, shuffle=False,
+                num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
+        elif self.test_mode=='test':
+            return DataLoader(self.testset, batch_size=self.infer_bs, shuffle=False, 
+                num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
+        elif self.test_mode=='train':
+            return DataLoader(self.trainset, batch_size=self.infer_bs, shuffle=False, 
+                num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
+        elif self.test_mode=='valid':
+            return DataLoader(self.valset, batch_size=self.infer_bs, shuffle=False, 
+                num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)
+        
     def predict_dataloader(self):
         return DataLoader(self.dataset, batch_size=self.infer_bs, shuffle=False, 
             num_workers=min(self.infer_bs,16),collate_fn=self.dataset.collate_fn)

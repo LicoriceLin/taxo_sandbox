@@ -35,7 +35,7 @@ class PredictWriter(BasePredictionWriter):
             elif dt is torch.Tensor:
                 o[k]=torch.concat([i[k] for i in predictions]).tolist()
         # print(f'saving: {trainer.default_root_dir+'/'+self.outname}')
-        pd.DataFrame(o).to_pickle(self.outname) #trainer.default_root_dir+'/'+
+        pd.DataFrame(o).to_pickle(trainer.default_root_dir+'/'+self.outname) #
 
 
 if __name__=='__main__':
@@ -59,12 +59,15 @@ if __name__=='__main__':
     parser.add_argument('--default_root_dir',default='infer')
     parser.add_argument('--mode',choices=['predict','test'],default='test')
     parser.add_argument('--limit_batches',type=int,default=-1)
+    parser.add_argument('--seed',type=int,default=42,
+        help='used for test, make sure the test set is the same as fitting stage.')
+    parser.add_argument('--test_mode',choices=['all','test','train','valid'],default='all')
     args=parser.parse_args()
     dataset,ckpt_path,exp_dir,output_stem,default_root_dir=(
         args.dataset,args.ckpt_path,args.exp_dir,
         args.output_stem,args.default_root_dir
         )
-    
+    seed_everything(args.seed)
     if '_single_domain.' in dataset:
         max_length,max_domain,infer_bs=1000,1,60
         output_suffix='-singledomain'
@@ -86,7 +89,7 @@ if __name__=='__main__':
         scheduler_kwargs={'warmup_iter_1':20,'warmup_iter_2':30,'warmup_lr':1e-10})
 
     datamodule=ConcatProteinDataModule(dataset,
-        max_length=max_length,max_domain=max_domain,infer_bs=infer_bs)
+        max_length=max_length,max_domain=max_domain,infer_bs=infer_bs,test_mode=args.test_mode)
     limit_batches=None if args.limit_batches==-1 else args.limit_batches
     # for i in Path('tmp_poster_ana/used_models/').iterdir():
     #     seed=i.stem.split('-')[1]
